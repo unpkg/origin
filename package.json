@@ -1,8 +1,8 @@
 {
   "private": true,
-  "name": "remix-app-template",
-  "description": "",
-  "license": "",
+  "name": "unpkg",
+  "description": "The CDN for everything on npm",
+  "license": "MIT",
   "scripts": {
     "build": "remix build",
     "dev": "remix dev",
