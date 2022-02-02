@@ -106,6 +106,20 @@ SELECT filename FROM files
   WHERE package_name = ? AND package_version = ?
 `);
 
+/**
+ * Resolves a URL filename into a filename in the given package.
+ *
+ * This is similar to node's own module resolution algorithm, except
+ * we don't need to think about node_modules directories on unpkg.
+ *
+ * This algorithm supports:
+ * - resolving foo => foo.js
+ * - resolving foo => foo.json
+ * - resolving foo => foo/index.js
+ * - resolving foo => foo/index.json
+ * - resolving using package.json main field
+ * - resolving using nested package.json files
+ */
 export function resolveFilename(
   packageName: string,
   version: string,
