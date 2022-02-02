@@ -4,13 +4,22 @@ import { json, redirect } from "remix";
 import { getContentTypeHeader } from "~/utils/contentTypes";
 import { parsePackagePathname } from "~/utils/packagePathnames";
 import {
-  getFile,
-  getManifest,
+  addPackageToCache,
+  resolveFilename,
   getMetadata,
-  getModule,
-  resolveFilename
-} from "~/utils/packages";
+  getFile
+} from "~/utils/packagesDatabase";
+import { getManifest } from "~/utils/registry";
 import { oneMinute, oneYear } from "~/utils/seconds";
+
+function notFound(what: string): Response {
+  return new Response(`Not found: ${what}`, {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain"
+    }
+  });
+}
 
 export let loader: LoaderFunction = async ({ request }) => {
   let url = new URL(request.url);
@@ -28,29 +37,28 @@ export let loader: LoaderFunction = async ({ request }) => {
 
   let manifest = await getManifest(parsed.packageSpec);
   if (manifest == null) {
-    return redirect("/"); // TODO: 404
+    return notFound(`package "${parsed.packageSpec}"`);
   }
+
+  await addPackageToCache(manifest.name, manifest.version);
 
   // Redirect /react@17 => /react@17.0.0/index.js
   if (manifest.version !== parsed.packageVersion) {
-    let manifestSpec = `${manifest.name}@${manifest.version}`;
-
     // Resolve the filename now as well to avoid a double redirect.
-    let resolvedFilename = await resolveFilename(
-      manifestSpec,
-      parsed.filename || "/"
+    let resolvedFilename = resolveFilename(
+      manifest.name,
+      manifest.version,
+      parsed.filename
     );
-    if (resolvedFilename == null) {
-      return new Response(
-        `Not found: "${parsed.filename}" in ${parsed.packageSpec}`,
-        {
-          status: 404
-        }
-      );
+
+    if (!resolvedFilename) {
+      return notFound(`"${parsed.filename}" in ${parsed.packageSpec}`);
     }
 
+    let manifestSpec = `${manifest.name}@${manifest.version}`;
     let redirectPathname = `/${manifestSpec}${resolvedFilename}`;
     let redirectTo = url.origin + redirectPathname + url.search;
+
     return redirect(redirectTo, {
       headers: {
         "Cache-Control": `public, max-age=${5 * oneMinute}`
@@ -61,7 +69,11 @@ export let loader: LoaderFunction = async ({ request }) => {
   // Serve ?meta requests
   // Note: Don't resolve the filename on ?meta requests. They must be specific.
   if (url.searchParams.has("meta")) {
-    let metadata = await getMetadata(parsed.packageSpec, parsed.filename);
+    let metadata = getMetadata(
+      parsed.packageName,
+      parsed.packageVersion,
+      parsed.filename
+    );
     return json(metadata, {
       headers: {
         "Cache-Control": `public, max-age=${oneYear}`
@@ -69,12 +81,14 @@ export let loader: LoaderFunction = async ({ request }) => {
     });
   }
 
-  let resolvedFilename = await resolveFilename(
-    parsed.packageSpec,
-    parsed.filename || "/"
+  let resolvedFilename = resolveFilename(
+    parsed.packageName,
+    parsed.packageVersion,
+    parsed.filename
   );
-  if (resolvedFilename == null) {
-    return redirect("/"); // TODO: 404
+
+  if (!resolvedFilename) {
+    return notFound(`"${parsed.filename}" in ${parsed.packageSpec}`);
   }
 
   // Redirect /react@17.0.0 => /react@17.0.0/index.js
@@ -90,23 +104,25 @@ export let loader: LoaderFunction = async ({ request }) => {
 
   // Serve ?raw requests
   if (url.searchParams.has("raw")) {
-    let file = await getFile(parsed.packageSpec, resolvedFilename);
-    return new Response(file.body, {
+    let file = getFile(
+      parsed.packageName,
+      parsed.packageVersion,
+      resolvedFilename
+    );
+
+    if (!file) {
+      // We shouldn't ever get here because we already resolved the filename...
+      return notFound(`"${resolvedFilename}" in ${parsed.packageSpec}`);
+    }
+
+    return new Response(file.content, {
       headers: {
-        "Content-Type": getContentTypeHeader(file.type)
+        "Content-Type": getContentTypeHeader(file.contentType)
       }
     });
   }
 
-  // Serve ?module requests
-  if (url.searchParams.has("module")) {
-    let mod = await getModule(parsed.packageSpec, resolvedFilename);
-    return new Response(mod.body, {
-      headers: {
-        "Content-Type": "application/javascript; charset=utf-8"
-      }
-    });
-  }
+  // TODO: Serve ?module requests
 
   // TODO: Serve HTML requests
   return { html: true };
